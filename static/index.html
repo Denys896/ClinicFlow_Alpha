@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>ClinicFlow</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+body{font-family:system-ui,sans-serif;max-width:720px;margin:2rem auto;padding:0 1rem;color:#222}
+nav{display:flex;gap:1rem;align-items:center;border-bottom:1px solid #ddd;padding-bottom:.5rem;margin-bottom:1rem}
+section{display:none}section.on{display:block}
+input,select,button{padding:.4rem .6rem;margin:.2rem 0;font:inherit}
+button{cursor:pointer}.slot{margin:.15rem}
+#msg{padding:.5rem;margin:.5rem 0;border-radius:4px;display:none}
+.ok{background:#e6f6ea}.err{background:#fde8e8}
+table{width:100%;border-collapse:collapse}td,th{border-bottom:1px solid #eee;padding:.3rem;text-align:left}
+</style></head><body>
+<nav><b>ClinicFlow</b><span id="who"></span><button id="out" onclick="logout()" style="display:none;margin-left:auto">Log out</button></nav>
+<div id="msg"></div>
+
+<section id="auth" class="on">
+  <h3>Log in</h3>
+  <input id="le" placeholder="Email"><br><input id="lp" type="password" placeholder="Password"><br>
+  <button onclick="login()">Log in</button>
+  <h3>Register as patient</h3>
+  <input id="rn" placeholder="Full name"><br><input id="re" placeholder="Email"><br>
+  <input id="rp" type="password" placeholder="Password"><br>
+  <input id="rd" type="date" title="Date of birth"><br>
+  <button onclick="register()">Register</button>
+</section>
+
+<section id="book">
+  <h3>Book an appointment</h3>
+  <input id="spec" placeholder="Specialty (e.g. Dentist)" oninput="loadDoctors()">
+  <select id="doc" onchange="loadSlots()"></select>
+  <input id="day" type="date" onchange="loadSlots()">
+  <div id="slots"></div>
+  <h3>My appointments</h3>
+  <table id="mine"></table>
+</section>
+
+<section id="staff"><p>Signed in as staff. Staff screens (daily schedule, doctor agenda, audit log) are planned for the Beta; see README.</p></section>
+
+<script>
+let token=localStorage.t||"", role=localStorage.r||"";
+const $=id=>document.getElementById(id);
+function say(t,ok){const m=$("msg");m.textContent=t;m.className=ok?"ok":"err";m.style.display="block"}
+async function api(p,method="GET",body){
+  const r=await fetch(p,{method,headers:{"Content-Type":"application/json",...(token?{Authorization:"Bearer "+token}:{})},body:body?JSON.stringify(body):undefined});
+  const d=await r.json().catch(()=>({}));
+  if(!r.ok){say((typeof d.detail==="string"?d.detail:JSON.stringify(d.detail))||r.statusText,false);throw 0}
+  return d}
+function show(){
+  const on=token?(role==="patient"?"book":"staff"):"auth";
+  for(const s of ["auth","book","staff"])$(s).classList.toggle("on",s===on);
+  $("out").style.display=token?"":"none";$("who").textContent=token?role:"";
+  if(on==="book"){$("day").value=$("day").value||new Date().toISOString().slice(0,10);loadDoctors();loadMine()}}
+async function register(){await api("/auth/register","POST",{full_name:$("rn").value,email:$("re").value,password:$("rp").value,date_of_birth:$("rd").value});say("Registered. Please log in.",true)}
+async function login(){const d=await api("/auth/login","POST",{email:$("le").value,password:$("lp").value});token=d.access_token;role=d.role;localStorage.t=token;localStorage.r=role;$("msg").style.display="none";show()}
+function logout(){token="";role="";localStorage.clear();show()}
+async function loadDoctors(){const ds=await api("/doctors?specialty="+encodeURIComponent($("spec").value));
+  $("doc").innerHTML=ds.map(d=>`<option value="${d.id}">${d.full_name} (${d.specialty})</option>`).join("");loadSlots()}
+async function loadSlots(){if(!$("doc").value||!$("day").value){$("slots").innerHTML="";return}
+  try{const s=await api(`/doctors/${$("doc").value}/slots?day=${$("day").value}`);
+  $("slots").innerHTML=s.length?s.map(x=>`<button class="slot" onclick="bookSlot('${x}')">${new Date(x).toTimeString().slice(0,5)}</button>`).join(""):"No free slots on this day."}catch(e){$("slots").innerHTML=""}}
+async function bookSlot(x){await api("/appointments","POST",{doctor_id:+$("doc").value,start_at:x});say("Appointment booked.",true);loadSlots();loadMine()}
+async function loadMine(){const a=await api("/appointments/me");
+  $("mine").innerHTML="<tr><th>When</th><th>Doctor</th><th>Status</th><th></th></tr>"+a.map(x=>`<tr><td>${new Date(x.start_at).toLocaleString()}</td><td>${x.doctor}</td><td>${x.status}</td><td>${x.status==="booked"?`<button onclick="cancelA(${x.id})">Cancel</button>`:""}</td></tr>`).join("")}
+async function cancelA(id){await api(`/appointments/${id}/cancel`,"POST");say("Appointment cancelled.",true);loadSlots();loadMine()}
+show();
+</script></body></html>
